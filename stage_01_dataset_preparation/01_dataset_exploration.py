@@ -1,19 +1,21 @@
 
-from pathlib import Path
-import hashlib
+import os
+import kagglehub
 import pandas as pd
 import librosa
+from pathlib import Path
 
 # ==========================================
 # Paths and Settings
 # ==========================================
 
+DATASET_HANDLE = "mohamedgharzouli/digital-drug-music"
+
+dataset_path = kagglehub.dataset_download(DATASET_HANDLE)
+
+DATASET_PATH = Path(dataset_path)
+
 PROJECT_DIR = Path(__file__).resolve().parent.parent
-
-DATASET_PATH = Path(
-    r"C:\Users\maisa\.cache\kagglehub\datasets\mohamedgharzouli\digital-drug-music\versions\2"
-)
-
 OUTPUT_DIR = PROJECT_DIR / "data" / "processed"
 
 APPROVED_LABELS = {"DD", "NDD"}
@@ -22,22 +24,10 @@ AUDIO_EXTENSIONS = {".mp3", ".wav", ".flac", ".ogg", ".m4a"}
 
 
 # ==========================================
-# Helper Functions
+# Helper Function
 # ==========================================
 
-def calculate_sha256(file_path):
-    """Calculate SHA256 hash for an audio file."""
-    sha256_hash = hashlib.sha256()
-
-    with open(file_path, "rb") as file:
-        for chunk in iter(lambda: file.read(4096), b""):
-            sha256_hash.update(chunk)
-
-    return sha256_hash.hexdigest()
-
-
 def add_reject_reason(current_reason, new_reason):
-    """Add a rejection reason without deleting previous reasons."""
     if not current_reason:
         return new_reason
 
@@ -54,7 +44,7 @@ def run_exploration():
 
     if not DATASET_PATH.exists():
         print("Dataset path does not exist!")
-        return
+        return None
 
     records = []
 
@@ -126,10 +116,13 @@ def run_exploration():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     inspection_file = OUTPUT_DIR / "audio_inspection.csv"
+
     df.to_csv(inspection_file, index=False)
 
     print("\nAudio Inspection Results:")
     print(f"Total audio files: {len(df)}")
+    print(f"DD files: {(df['label'] == 'DD').sum()}")
+    print(f"NDD files: {(df['label'] == 'NDD').sum()}")
     print(f"Accepted files: {(df['status'] == 'accepted').sum()}")
     print(f"Rejected files: {(df['status'] == 'rejected').sum()}")
 
@@ -145,95 +138,68 @@ def run_exploration():
 # Task 2: Label Verification
 # ==========================================
 
-def run_label_verification(df):
+def run_validation(df):
 
     print("\n========== LABEL VERIFICATION ==========")
 
     df = df.copy()
 
-    df["sha256"] = None
-    df["is_duplicate"] = False
-
-    seen_hashes = set()
+    df["reject_reason"] = df["reject_reason"].fillna("").astype(str)
+    df["status"] = df["status"].fillna("accepted").astype(str)
 
     for index, row in df.iterrows():
 
         file_path = Path(row["file_path"])
 
-        # Check whether the label is approved
-        if row["label"] not in APPROVED_LABELS:
+        label = str(row["label"]).strip().upper()
 
-            df.at[index, "status"] = "rejected"
+        reasons = []
 
-            df.at[index, "reject_reason"] = add_reject_reason(
-                row["reject_reason"],
-                f"Unapproved label: {row['label']}"
-            )
+        # Check approved labels
+        if label not in APPROVED_LABELS:
+            reasons.append(f"Unapproved label: {label}")
 
-        # Check whether the file path matches its label
+        # Check folder and label consistency
         try:
             relative_path = file_path.relative_to(DATASET_PATH)
-            actual_folder = relative_path.parts[0]
 
-            if actual_folder != row["label"]:
+            actual_folder = relative_path.parts[0].upper()
 
-                df.at[index, "status"] = "rejected"
-
-                df.at[index, "reject_reason"] = add_reject_reason(
-                    df.at[index, "reject_reason"],
-                    "Label does not match folder name"
-                )
+            if actual_folder != label:
+                reasons.append("Label does not match folder name")
 
         except (ValueError, IndexError):
-
-            df.at[index, "status"] = "rejected"
-
-            df.at[index, "reject_reason"] = add_reject_reason(
-                df.at[index, "reject_reason"],
+            reasons.append(
                 "File is outside the expected dataset folders"
             )
 
-        # Calculate SHA256 for each file
-        try:
-            file_hash = calculate_sha256(file_path)
-            df.at[index, "sha256"] = file_hash
+        # Check file existence
+        if not file_path.exists():
+            reasons.append("File not found")
 
-            # Detect duplicate files
-            if file_hash in seen_hashes:
-
-                df.at[index, "is_duplicate"] = True
-                df.at[index, "status"] = "rejected"
-
-                df.at[index, "reject_reason"] = add_reject_reason(
-                    df.at[index, "reject_reason"],
-                    "Duplicate audio file"
-                )
-
-            else:
-                seen_hashes.add(file_hash)
-
-        except Exception as error:
-
+        # Update status and reject reason
+        if reasons:
             df.at[index, "status"] = "rejected"
+            df.at[index, "reject_reason"] = "; ".join(reasons)
 
-            df.at[index, "reject_reason"] = add_reject_reason(
-                df.at[index, "reject_reason"],
-                f"SHA256 calculation failed: {error}"
-            )
-
-    # Save final validation results
+    # Save validation results
     validation_file = OUTPUT_DIR / "dataset_validation.csv"
+
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     df.to_csv(validation_file, index=False)
 
     print("\nLabel Verification Results:")
     print(f"Total files: {len(df)}")
+    print(
+        f"Valid labels: "
+        f"{df['label'].astype(str).str.strip().str.upper().isin(APPROVED_LABELS).sum()}"
+    )
     print(f"Accepted files: {(df['status'] == 'accepted').sum()}")
     print(f"Rejected files: {(df['status'] == 'rejected').sum()}")
-    print(f"Duplicate files: {df['is_duplicate'].sum()}")
 
-    print("\nLabel distribution:")
-    print(df["label"].value_counts())
+    print("\nOutput columns:")
+    print(df.columns.tolist())
 
     print(f"\nValidation file saved to: {validation_file}")
 
@@ -250,6 +216,6 @@ if __name__ == "__main__":
 
     if inspection_df is not None:
 
-        final_df = run_label_verification(inspection_df)
+        final_df = run_validation(inspection_df)
 
-        print("\n========== ALL TASKS COMPLETED ==========")
+        print("\n========== TASK 1 AND TASK 2 COMPLETED ==========")
