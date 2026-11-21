@@ -1,158 +1,255 @@
 
-import os
+from pathlib import Path
+import hashlib
 import pandas as pd
 import librosa
-from pathlib import Path
 
 # ==========================================
-# PATHS
+# Paths and Settings
 # ==========================================
+
+PROJECT_DIR = Path(__file__).resolve().parent.parent
 
 DATASET_PATH = Path(
     r"C:\Users\maisa\.cache\kagglehub\datasets\mohamedgharzouli\digital-drug-music\versions\2"
 )
 
-PROJECT_DIR = Path(__file__).resolve().parent.parent
 OUTPUT_DIR = PROJECT_DIR / "data" / "processed"
 
-AUDIO_EXTENSIONS = {".mp3"}
+APPROVED_LABELS = {"DD", "NDD"}
 
-# ==========================================
-# AUDIO INFORMATION
-# ==========================================
-
-def get_audio_info(file_path):
-
-    audio, sample_rate = librosa.load(
-        str(file_path),
-        sr=None,
-        mono=False
-    )
-
-    if audio.ndim == 1:
-        channels = 1
-        samples = len(audio)
-    else:
-        channels = audio.shape[0]
-        samples = audio.shape[-1]
-
-    duration = samples / sample_rate
-
-    return duration, channels, sample_rate
+AUDIO_EXTENSIONS = {".mp3", ".wav", ".flac", ".ogg", ".m4a"}
 
 
 # ==========================================
-# TASK 1: AUDIO INSPECTION
+# Helper Functions
+# ==========================================
+
+def calculate_sha256(file_path):
+    """Calculate SHA256 hash for an audio file."""
+    sha256_hash = hashlib.sha256()
+
+    with open(file_path, "rb") as file:
+        for chunk in iter(lambda: file.read(4096), b""):
+            sha256_hash.update(chunk)
+
+    return sha256_hash.hexdigest()
+
+
+def add_reject_reason(current_reason, new_reason):
+    """Add a rejection reason without deleting previous reasons."""
+    if not current_reason:
+        return new_reason
+
+    return current_reason + "; " + new_reason
+
+
+# ==========================================
+# Task 1: Audio Inspection
 # ==========================================
 
 def run_exploration():
 
+    print("\n========== AUDIO INSPECTION ==========")
+
     if not DATASET_PATH.exists():
-        raise FileNotFoundError(
-            f"Dataset not found: {DATASET_PATH}"
-        )
+        print("Dataset path does not exist!")
+        return
 
     records = []
 
-    for label in ["DD", "NDD"]:
+    for file_path in sorted(DATASET_PATH.rglob("*")):
 
-        folder_path = DATASET_PATH / label
-
-        if not folder_path.exists():
-            print(f"Warning: {label} folder not found")
+        if not file_path.is_file():
             continue
 
-        for root, dirs, files in os.walk(folder_path):
+        if file_path.suffix.lower() not in AUDIO_EXTENSIONS:
+            continue
 
-            for file in files:
+        relative_path = file_path.relative_to(DATASET_PATH)
 
-                file_path = Path(root) / file
+        folder_name = relative_path.parts[0] if relative_path.parts else ""
 
-                if file_path.suffix.lower() not in AUDIO_EXTENSIONS:
-                    continue
+        label = folder_name
 
-                status = "accepted"
-                reject_reason = ""
+        duration_sec = None
+        channels = None
+        orig_sr = None
 
-                duration = None
-                channels = None
-                sample_rate = None
+        status = "accepted"
+        reject_reason = ""
 
-                try:
+        try:
+            audio, sr = librosa.load(
+                str(file_path),
+                sr=None,
+                mono=False
+            )
 
-                    duration, channels, sample_rate = get_audio_info(
-                        file_path
-                    )
+            orig_sr = sr
 
-                    if duration <= 0:
-                        status = "rejected"
-                        reject_reason = "Invalid audio duration"
+            if audio.ndim == 1:
+                channels = 1
+            else:
+                channels = audio.shape[0]
 
-                except Exception as error:
+            duration_sec = len(audio) / sr
 
-                    status = "rejected"
-                    reject_reason = f"Audio reading error: {error}"
+            if duration_sec <= 0:
+                status = "rejected"
+                reject_reason = add_reject_reason(
+                    reject_reason,
+                    "Invalid audio duration"
+                )
 
-                records.append({
+        except Exception as error:
+            status = "rejected"
+            reject_reason = add_reject_reason(
+                reject_reason,
+                f"Audio inspection failed: {error}"
+            )
 
-                    "file_name": file,
-                    "file_path": str(file_path),
-                    "folder_name": file_path.parent.name,
-                    "label": label,
-                    "duration_sec": duration,
-                    "channels": channels,
-                    "orig_sr": sample_rate,
-                    "status": status,
-                    "reject_reason": reject_reason
+        records.append({
+            "file_name": file_path.name,
+            "file_path": str(file_path),
+            "folder_name": folder_name,
+            "label": label,
+            "duration_sec": duration_sec,
+            "channels": channels,
+            "orig_sr": orig_sr,
+            "status": status,
+            "reject_reason": reject_reason
+        })
 
-                })
-
-    columns = [
-        "file_name",
-        "file_path",
-        "folder_name",
-        "label",
-        "duration_sec",
-        "channels",
-        "orig_sr",
-        "status",
-        "reject_reason"
-    ]
-
-    df = pd.DataFrame(records, columns=columns)
+    df = pd.DataFrame(records)
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    output_file = OUTPUT_DIR / "audio_inspection.csv"
+    inspection_file = OUTPUT_DIR / "audio_inspection.csv"
+    df.to_csv(inspection_file, index=False)
 
-    df.to_csv(output_file, index=False)
+    print("\nAudio Inspection Results:")
+    print(f"Total audio files: {len(df)}")
+    print(f"Accepted files: {(df['status'] == 'accepted').sum()}")
+    print(f"Rejected files: {(df['status'] == 'rejected').sum()}")
 
-    # ======================================
-    # SUMMARY
-    # ======================================
-
-    print("\n========== AUDIO INSPECTION SUMMARY ==========")
-
-    print("Total audio files:", len(df))
-
-    print("DD files:", (df["label"] == "DD").sum())
-
-    print("NDD files:", (df["label"] == "NDD").sum())
-
-    print("Accepted files:", (df["status"] == "accepted").sum())
-
-    print("Rejected files:", (df["status"] == "rejected").sum())
-
-    print("\nLabel distribution:")
+    print("\nFiles by label:")
     print(df["label"].value_counts())
 
-    print("\nSample of inspected files:")
-    print(df.head(10).to_string(index=False))
-
-    print("\nResults saved to:", output_file)
+    print(f"\nInspection file saved to: {inspection_file}")
 
     return df
 
 
+# ==========================================
+# Task 2: Label Verification
+# ==========================================
+
+def run_label_verification(df):
+
+    print("\n========== LABEL VERIFICATION ==========")
+
+    df = df.copy()
+
+    df["sha256"] = None
+    df["is_duplicate"] = False
+
+    seen_hashes = set()
+
+    for index, row in df.iterrows():
+
+        file_path = Path(row["file_path"])
+
+        # Check whether the label is approved
+        if row["label"] not in APPROVED_LABELS:
+
+            df.at[index, "status"] = "rejected"
+
+            df.at[index, "reject_reason"] = add_reject_reason(
+                row["reject_reason"],
+                f"Unapproved label: {row['label']}"
+            )
+
+        # Check whether the file path matches its label
+        try:
+            relative_path = file_path.relative_to(DATASET_PATH)
+            actual_folder = relative_path.parts[0]
+
+            if actual_folder != row["label"]:
+
+                df.at[index, "status"] = "rejected"
+
+                df.at[index, "reject_reason"] = add_reject_reason(
+                    df.at[index, "reject_reason"],
+                    "Label does not match folder name"
+                )
+
+        except (ValueError, IndexError):
+
+            df.at[index, "status"] = "rejected"
+
+            df.at[index, "reject_reason"] = add_reject_reason(
+                df.at[index, "reject_reason"],
+                "File is outside the expected dataset folders"
+            )
+
+        # Calculate SHA256 for each file
+        try:
+            file_hash = calculate_sha256(file_path)
+            df.at[index, "sha256"] = file_hash
+
+            # Detect duplicate files
+            if file_hash in seen_hashes:
+
+                df.at[index, "is_duplicate"] = True
+                df.at[index, "status"] = "rejected"
+
+                df.at[index, "reject_reason"] = add_reject_reason(
+                    df.at[index, "reject_reason"],
+                    "Duplicate audio file"
+                )
+
+            else:
+                seen_hashes.add(file_hash)
+
+        except Exception as error:
+
+            df.at[index, "status"] = "rejected"
+
+            df.at[index, "reject_reason"] = add_reject_reason(
+                df.at[index, "reject_reason"],
+                f"SHA256 calculation failed: {error}"
+            )
+
+    # Save final validation results
+    validation_file = OUTPUT_DIR / "dataset_validation.csv"
+
+    df.to_csv(validation_file, index=False)
+
+    print("\nLabel Verification Results:")
+    print(f"Total files: {len(df)}")
+    print(f"Accepted files: {(df['status'] == 'accepted').sum()}")
+    print(f"Rejected files: {(df['status'] == 'rejected').sum()}")
+    print(f"Duplicate files: {df['is_duplicate'].sum()}")
+
+    print("\nLabel distribution:")
+    print(df["label"].value_counts())
+
+    print(f"\nValidation file saved to: {validation_file}")
+
+    return df
+
+
+# ==========================================
+# Run Both Tasks
+# ==========================================
+
 if __name__ == "__main__":
-    run_exploration()
+
+    inspection_df = run_exploration()
+
+    if inspection_df is not None:
+
+        final_df = run_label_verification(inspection_df)
+
+        print("\n========== ALL TASKS COMPLETED ==========")
