@@ -1,4 +1,5 @@
 
+import os
 import kagglehub
 import pandas as pd
 import librosa
@@ -69,6 +70,7 @@ def run_exploration():
         reject_reason = ""
 
         try:
+
             audio, sr = librosa.load(
                 str(file_path),
                 sr=None,
@@ -85,7 +87,9 @@ def run_exploration():
             duration_sec = len(audio) / sr
 
             if duration_sec <= 0:
+
                 status = "rejected"
+
                 reject_reason = add_reject_reason(
                     reject_reason,
                     "Invalid audio duration"
@@ -101,8 +105,12 @@ def run_exploration():
             )
 
         records.append({
+
             "file_name": file_path.name,
-            "file_path": str(file_path),
+
+            # Save relative path instead of personal computer path
+            "file_path": str(relative_path),
+
             "folder_name": folder_name,
             "label": label,
             "duration_sec": duration_sec,
@@ -140,7 +148,7 @@ def run_exploration():
 # Task 2: Label Verification
 # ==========================================
 
-def run_validation(df):
+def run_label_verification(df):
 
     print("\n========== LABEL VERIFICATION ==========")
 
@@ -151,7 +159,8 @@ def run_validation(df):
 
     for index, row in df.iterrows():
 
-        file_path = Path(row["file_path"])
+        # Rebuild the full path using KaggleHub dataset path
+        file_path = DATASET_PATH / row["file_path"]
 
         label = str(row["label"]).strip().upper()
 
@@ -232,11 +241,15 @@ if __name__ == "__main__":
 
     if inspection_df is not None:
 
-        final_df = run_validation(inspection_df)
+        final_df = run_label_verification(inspection_df)
 
-        print("\n========== AUDIO INSPECTION AND LABEL VERIFICATION COMPLETED ==========")
+        print(
+            "\n========== AUDIO INSPECTION AND "
+            "LABEL VERIFICATION COMPLETED =========="
+        )
 
         print("\nFinal Results:")
+
         print(f"Total files: {len(final_df)}")
         print(f"Accepted files: {(final_df['status'] == 'accepted').sum()}")
         print(f"Rejected files: {(final_df['status'] == 'rejected').sum()}")
