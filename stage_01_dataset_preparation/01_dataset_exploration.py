@@ -1,5 +1,4 @@
 
-import os
 import kagglehub
 import pandas as pd
 import librosa
@@ -12,7 +11,6 @@ from pathlib import Path
 DATASET_HANDLE = "mohamedgharzouli/digital-drug-music"
 
 dataset_path = kagglehub.dataset_download(DATASET_HANDLE)
-
 DATASET_PATH = Path(dataset_path)
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
@@ -28,6 +26,7 @@ AUDIO_EXTENSIONS = {".mp3", ".wav", ".flac", ".ogg", ".m4a"}
 # ==========================================
 
 def add_reject_reason(current_reason, new_reason):
+
     if not current_reason:
         return new_reason
 
@@ -93,7 +92,9 @@ def run_exploration():
                 )
 
         except Exception as error:
+
             status = "rejected"
+
             reject_reason = add_reject_reason(
                 reject_reason,
                 f"Audio inspection failed: {error}"
@@ -120,6 +121,7 @@ def run_exploration():
     df.to_csv(inspection_file, index=False)
 
     print("\nAudio Inspection Results:")
+
     print(f"Total audio files: {len(df)}")
     print(f"DD files: {(df['label'] == 'DD').sum()}")
     print(f"NDD files: {(df['label'] == 'NDD').sum()}")
@@ -157,10 +159,12 @@ def run_validation(df):
 
         # Check approved labels
         if label not in APPROVED_LABELS:
+
             reasons.append(f"Unapproved label: {label}")
 
         # Check folder and label consistency
         try:
+
             relative_path = file_path.relative_to(DATASET_PATH)
 
             actual_folder = relative_path.parts[0].upper()
@@ -169,39 +173,51 @@ def run_validation(df):
                 reasons.append("Label does not match folder name")
 
         except (ValueError, IndexError):
+
             reasons.append(
                 "File is outside the expected dataset folders"
             )
 
         # Check file existence
         if not file_path.exists():
+
             reasons.append("File not found")
 
-        # Update status and reject reason
+        # Update status and preserve rejection reasons
         if reasons:
-            df.at[index, "status"] = "rejected"
-            df.at[index, "reject_reason"] = "; ".join(reasons)
 
-    # Save validation results
-    validation_file = OUTPUT_DIR / "dataset_validation.csv"
+            for reason in reasons:
+
+                df.at[index, "reject_reason"] = add_reject_reason(
+                    df.at[index, "reject_reason"],
+                    reason
+                )
+
+            df.at[index, "status"] = "rejected"
+
+    # Save both tasks in ONE CSV file
+    validation_file = OUTPUT_DIR / "audio_inspection.csv"
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     df.to_csv(validation_file, index=False)
 
     print("\nLabel Verification Results:")
+
     print(f"Total files: {len(df)}")
+
     print(
         f"Valid labels: "
         f"{df['label'].astype(str).str.strip().str.upper().isin(APPROVED_LABELS).sum()}"
     )
+
     print(f"Accepted files: {(df['status'] == 'accepted').sum()}")
     print(f"Rejected files: {(df['status'] == 'rejected').sum()}")
 
     print("\nOutput columns:")
     print(df.columns.tolist())
 
-    print(f"\nValidation file saved to: {validation_file}")
+    print(f"\nUpdated CSV file saved to: {validation_file}")
 
     return df
 
@@ -218,4 +234,9 @@ if __name__ == "__main__":
 
         final_df = run_validation(inspection_df)
 
-        print("\n========== TASK 1 AND TASK 2 COMPLETED ==========")
+        print("\n========== AUDIO INSPECTION AND LABEL VERIFICATION COMPLETED ==========")
+
+        print("\nFinal Results:")
+        print(f"Total files: {len(final_df)}")
+        print(f"Accepted files: {(final_df['status'] == 'accepted').sum()}")
+        print(f"Rejected files: {(final_df['status'] == 'rejected').sum()}")
