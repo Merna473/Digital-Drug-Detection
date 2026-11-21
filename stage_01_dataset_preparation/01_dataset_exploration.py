@@ -1,4 +1,3 @@
-
 import os
 import kagglehub
 import pandas as pd
@@ -160,7 +159,8 @@ def run_label_verification(df):
     for index, row in df.iterrows():
 
         # Rebuild the full path using KaggleHub dataset path
-        file_path = DATASET_PATH / row["file_path"]
+        raw_path = Path(str(row["file_path"]))
+        file_path = raw_path if raw_path.is_absolute() else (DATASET_PATH / raw_path)
 
         label = str(row["label"]).strip().upper()
 
